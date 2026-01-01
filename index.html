@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Custom WebGL Battle Engine</title>
     <style>
         body {
@@ -14,30 +14,25 @@
             margin: 0;
             font-family: 'Courier New', Courier, monospace;
             overflow: hidden;
+            touch-action: none; /* Prevent scroll on mobile */
         }
         #game-wrapper {
             position: relative;
             box-shadow: 0 0 20px rgba(0,0,0,0.5);
             border: 10px solid #8b9bb4; /* Gameboy Grey */
             border-radius: 10px;
-            background-color: #f8f8d8; /* Changed default to match game bg */
-            width: 600px;
-            height: 550px;
+            background-color: #f8f8d8; 
+            /* Responsive sizing */
+            width: 100%;
+            max-width: 600px;
+            aspect-ratio: 600/550;
+            max-height: 90vh;
         }
         #game-container {
             width: 100%;
             height: 100%;
         }
-        .instructions {
-            position: absolute;
-            top: -40px;
-            left: 0;
-            width: 100%;
-            text-align: center;
-            color: #8b9bb4;
-            font-size: 14px;
-        }
-        /* Loading message in case JS fails */
+        /* Instructions CSS removed */
         #loading-msg {
             position: absolute;
             top: 50%;
@@ -55,7 +50,7 @@
 
 <div id="game-wrapper">
     <div id="loading-msg">Loading Battle Engine...</div>
-    <div class="instructions">Use keys 1-4 to select a move</div>
+    <!-- Instructions HTML removed -->
     <div id="game-container" style="position: relative; z-index: 1;"></div>
 </div>
 
@@ -66,8 +61,9 @@
 
 const BATTLE_CONFIG = {
     // VISUAL SETTINGS
+    backgroundUrl: "https://i.postimg.cc/Dw9Mr47H/BG.png", // New Background URL
     colors: {
-        background: 0xf8f8d8, // Classic Gameboy Greenish-White
+        background: 0xf8f8d8, // Classic Gameboy Greenish-White (Fallback)
         uiBox: 0x2e4053,      // Dark text box color
         uiText: 0xffffff,     // White text
         healthBarFull: 0x2ecc71,
@@ -85,14 +81,11 @@ const BATTLE_CONFIG = {
     // PLAYER CONFIGURATION
     player: {
         name: "JCC",
-        maxHp: 300, // Increased HP for longer battles
-        // TO USE YOUR OWN IMAGE: Upload image to a host (like Imgur) and paste URL here.
-        // If 'spriteUrl' is empty, it uses a colored block.
-        // NOTE: If you are getting "Invalid URL" errors, keep this empty unless the file exists locally.
-        spriteUrl: "", 
+        maxHp: 300, 
+        spriteUrl: "https://i.postimg.cc/76gJQd8h/JCClogo.png", 
         fallbackColor: 0xe74c3c, // Red (Excitement)
-        scale: 3, // Make sprite bigger/smaller
-        x: 150, y: 300, // Screen position
+        scale: 0.3, // Drastically reduced scale for large high-res images
+        x: 150, y: 300, 
         moves: [
             { name: "COSPLAY", power: 35, type: "special", text: "dazzled with COSPLAY!" },
             { name: "ACTIVITIES", power: 25, type: "physical", text: "joined ACTIVITIES!" },
@@ -104,19 +97,19 @@ const BATTLE_CONFIG = {
     // ENEMY CONFIGURATION
     enemy: {
         name: "BORING WEEKEND",
-        maxHp: 500, // Significantly increased HP to survive all 4 player moves
-        spriteUrl: "", 
+        maxHp: 500, 
+        spriteUrl: "https://i.postimg.cc/9QRdYxf6/weekend.png", 
         fallbackColor: 0x7f8c8d, // Grey (Boring)
-        scale: 3,
+        scale: 0.25, // Adjusted to be between 0.2 and 0.3
         x: 450, y: 150,
         moves: [
-            // Increased power to compensate for the "Not very effective" (half damage) penalty
             { name: "STARE AT CEILING", power: 30, type: "physical", text: "stared at the ceiling." }, 
             { name: "TV RERUNS", power: 50, type: "special", text: "played boring TV RERUNS!" },
             { name: "DOOMSCROLL", power: 60, type: "special", text: "used THE ENDLESS DOOMSCROLL!" },
             { name: "UNNECESSARY NAP", power: 40, type: "status", text: "took an UNNECESSARY NAP!" }
         ]
     }
+    // MIDDLE OBJECT REMOVED
 };
 
 // ========================================================================================
@@ -134,34 +127,45 @@ class BattleScene extends Phaser.Scene {
             console.warn("Could not load file:", fileObj.key);
         });
 
-        // Helper to validate URLs before passing to Phaser loader
-        // This prevents the "Failed to execute 'open' on 'XMLHttpRequest'" error
         const loadIfValid = (key, url) => {
             if (url && typeof url === 'string' && url.trim().length > 0) {
                 this.load.image(key, url);
             }
         };
 
+        loadIfValid('background', BATTLE_CONFIG.backgroundUrl);
         loadIfValid('player', BATTLE_CONFIG.player.spriteUrl);
         loadIfValid('enemy', BATTLE_CONFIG.enemy.spriteUrl);
     }
 
     create() {
-        // Hide loading message
         const loadingMsg = document.getElementById('loading-msg');
         if (loadingMsg) loadingMsg.style.display = 'none';
 
-        this.turn = 'player'; // 'player' or 'enemy'
+        this.turn = 'player'; 
         this.isAnimating = false;
 
         // 1. Setup Background
-        this.cameras.main.setBackgroundColor(BATTLE_CONFIG.colors.background);
+        if (this.textures.exists('background')) {
+            this.bgImage = this.add.image(this.scale.width / 2, this.scale.height / 2, 'background');
+            // Scale to fill the screen (cover mode)
+            let scaleX = this.scale.width / this.bgImage.width;
+            let scaleY = this.scale.height / this.bgImage.height;
+            let scale = Math.max(scaleX, scaleY);
+            this.bgImage.setScale(scale);
+            this.bgImage.setDepth(-1000); // Ensure it is behind everything
+        } else {
+            this.cameras.main.setBackgroundColor(BATTLE_CONFIG.colors.background);
+        }
 
-        // 2. Create Characters (Sprites or Fallback Rectangles)
+        // 2. Create Objects (Sorted by Y position for correct depth)
+        // We create them, then setDepth based on Y to ensure 2.5D perspective
+        
         this.player = this.createCharacter('player', BATTLE_CONFIG.player);
         this.enemy = this.createCharacter('enemy', BATTLE_CONFIG.enemy);
+        // Middle object creation removed
 
-        // 3. Create UI (Health Bars & Text Box)
+        // 3. Create UI (Always on top)
         this.createUI();
 
         // 4. Start Intro
@@ -175,46 +179,51 @@ class BattleScene extends Phaser.Scene {
 
     createCharacter(key, config) {
         let sprite;
-        // Check if we loaded a real image or need a placeholder rectangle
         if (this.textures.exists(key)) {
             sprite = this.add.image(config.x, config.y, key);
             sprite.setScale(config.scale);
+            // Force Linear filter (Smoothing) explicitly
+            if (sprite.texture) {
+                sprite.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+            }
         } else {
-            // Draw a placeholder box if no image found (Fallback)
+            // Fallback Graphics
             let graphics = this.add.graphics();
             graphics.lineStyle(2, 0x000000, 1);
             graphics.fillStyle(config.fallbackColor, 1);
-            graphics.fillRect(-32, -32, 64, 64); // 64x64 box
+            graphics.fillRect(-32, -32, 64, 64);
             graphics.strokeRect(-32, -32, 64, 64);
             
-            // Add a little "face" to know direction
+            // Directional Hint
             graphics.fillStyle(0x000000, 1);
             if (key === 'player') {
-                 // Back view (no face, maybe a tail/ear hint)
-                 graphics.fillRect(-10, -32, 5, 10); // Left ear
-                 graphics.fillRect(5, -32, 5, 10); // Right ear
+                 graphics.fillRect(-10, -32, 5, 10); 
+                 graphics.fillRect(5, -32, 5, 10); 
             } else {
-                // Front view (eyes)
-                graphics.fillRect(-15, -10, 5, 5); // Left eye
-                graphics.fillRect(10, -10, 5, 5); // Right eye
+                graphics.fillRect(-15, -10, 5, 5); 
+                graphics.fillRect(10, -10, 5, 5); 
             }
 
             sprite = this.add.container(config.x, config.y, [graphics]);
             sprite.setSize(64, 64);
         }
         
-        // Add stats to the sprite object
         sprite.name = config.name;
         sprite.hp = config.maxHp;
         sprite.maxHp = config.maxHp;
         sprite.moves = config.moves;
         sprite.isPlayer = (key === 'player');
         
-        // Add shadow
-        let shadow = this.add.ellipse(config.x, config.y + 40, 80, 20, 0x000000, 0.2);
+        // Shadow removed per request
+        // let shadow = this.add.ellipse(config.x, config.y + 40, 80, 20, 0x000000, 0.2);
         
+        // Set depth based on Y position (lower on screen = closer to camera)
+        sprite.setDepth(config.y);
+
         return sprite;
     }
+
+    // createMiddleObject removed
 
     createUI() {
         // --- Health Bars ---
@@ -223,12 +232,10 @@ class BattleScene extends Phaser.Scene {
         this.updateHealthUI();
 
         // --- Dialog Box ---
-        // Main container box
         let boxGraphics = this.add.graphics();
         boxGraphics.fillStyle(BATTLE_CONFIG.colors.uiBox, 1);
         boxGraphics.fillRect(0, 400, 600, 150);
         
-        // Border for style
         boxGraphics.lineStyle(4, 0xffffff, 1);
         boxGraphics.strokeRect(4, 404, 592, 142);
         
@@ -237,22 +244,36 @@ class BattleScene extends Phaser.Scene {
             fill: "#ffffff", 
             wordWrap: { width: 540 } 
         });
-
-        // --- Menu Text (Initially Hidden) ---
-        // Moved container down to y=460 to sit below the main question text
-        this.menuContainer = this.add.container(30, 460);
         
-        // Instructions for the menu
-        BATTLE_CONFIG.player.moves.forEach((move, index) => {
-            // Grid Layout Logic
-            // index 0 & 1 go to row 0. index 2 & 3 go to row 1.
-            let xPos = (index % 2) * 280; 
-            let yPos = Math.floor(index / 2) * 40;
+        // Ensure UI is always on top
+        boxGraphics.setDepth(100);
+        this.mainText.setDepth(101);
+        this.enemyHP.setDepth(100);
+        this.playerHP.setDepth(100);
 
+        // --- Menu Container ---
+        this.menuContainer = this.add.container(30, 460);
+        this.menuContainer.setDepth(102);
+        
+        BATTLE_CONFIG.player.moves.forEach((move, index) => {
+            let xPos = (index % 2) * 280; 
+            let yPos = Math.floor(index / 2) * 45; // Increased spacing slightly for touch
+
+            // Make text interactive for clicking
             let txt = this.add.text(xPos, yPos, `${index + 1}. ${move.name}`, { 
                 font: "20px Courier", 
-                fill: "#ffffff"
+                fill: "#ffffff",
+                backgroundColor: null
+            })
+            .setInteractive({ useHandCursor: true })
+            .on('pointerover', () => txt.setStyle({ fill: '#ffff00' }))
+            .on('pointerout', () => txt.setStyle({ fill: '#ffffff' }))
+            .on('pointerdown', () => {
+                if (this.turn === 'player' && !this.isAnimating) {
+                    this.performMove(this.player, this.enemy, move);
+                }
             });
+
             this.menuContainer.add(txt);
         });
         this.menuContainer.setVisible(false);
@@ -261,7 +282,6 @@ class BattleScene extends Phaser.Scene {
     addHealthBar(x, y, name) {
         let container = this.add.container(x, y);
         
-        // Background for the HUD element
         let hudBg = this.add.graphics();
         hudBg.fillStyle(0xffffff, 0.8);
         hudBg.fillRoundedRect(-10, -5, 220, 60, 5);
@@ -269,8 +289,6 @@ class BattleScene extends Phaser.Scene {
         hudBg.strokeRoundedRect(-10, -5, 220, 60, 5);
         
         let nameText = this.add.text(0, 0, name, { font: "bold 20px Courier", fill: "#000" });
-        
-        // HP Text label
         let hpLabel = this.add.text(0, 25, "HP:", { font: "bold 16px Courier", fill: "#000" });
 
         let bg = this.add.rectangle(30, 32, 160, 12, 0x000000).setOrigin(0);
@@ -278,12 +296,11 @@ class BattleScene extends Phaser.Scene {
         let fill = this.add.rectangle(32, 34, 156, 8, BATTLE_CONFIG.colors.healthBarFull).setOrigin(0);
         
         container.add([hudBg, nameText, hpLabel, bg, bgInner, fill]);
-        container.fillBar = fill; // Reference for updating
+        container.fillBar = fill; 
         return container;
     }
 
     updateHealthUI() {
-        // Player
         let pPct = Math.max(0, this.player.hp / this.player.maxHp);
         this.tweens.add({
             targets: this.playerHP.fillBar,
@@ -293,7 +310,6 @@ class BattleScene extends Phaser.Scene {
         });
         this.playerHP.fillBar.fillColor = pPct < 0.2 ? BATTLE_CONFIG.colors.healthBarLow : BATTLE_CONFIG.colors.healthBarFull;
 
-        // Enemy
         let ePct = Math.max(0, this.enemy.hp / this.enemy.maxHp);
         this.tweens.add({
             targets: this.enemyHP.fillBar,
@@ -310,7 +326,6 @@ class BattleScene extends Phaser.Scene {
         let length = text.length;
         let i = 0;
         
-        // Clear any existing timer to prevent overlap
         if(this.textTimer) this.textTimer.remove();
 
         this.textTimer = this.time.addEvent({
@@ -330,9 +345,8 @@ class BattleScene extends Phaser.Scene {
         if (this.turn === 'player') {
             this.mainText.setText(BATTLE_CONFIG.text.whatDo);
             this.menuContainer.setVisible(true);
-            this.isAnimating = false; // Allow input
+            this.isAnimating = false; 
         } else {
-            // Enemy Turn AI (Random Move)
             this.time.delayedCall(1000, () => {
                 if(this.enemy.hp > 0) {
                     let randomMove = Phaser.Math.RND.pick(this.enemy.moves);
@@ -345,7 +359,6 @@ class BattleScene extends Phaser.Scene {
     handleInput(event) {
         if (this.turn !== 'player' || this.isAnimating) return;
 
-        // Check for number keys 1-4
         let keyIndex = parseInt(event.key) - 1;
         if (keyIndex >= 0 && keyIndex < BATTLE_CONFIG.player.moves.length) {
             let move = BATTLE_CONFIG.player.moves[keyIndex];
@@ -359,37 +372,34 @@ class BattleScene extends Phaser.Scene {
         
         let msg = `${attacker.name} ${move.text}`;
         
-        // 1. Show Move Text
         this.typewriteText(msg, () => {
-            
-            // 2. Logic after move text is done
             if (!attacker.isPlayer) {
-                // If enemy, show effective text separately
                 this.typewriteText("It's not very effective...", () => {
                     this.animateMove(attacker, defender, move);
                 });
             } else {
-                // If player, go straight to animation
                 this.animateMove(attacker, defender, move);
             }
         });
     }
 
-    // Helper to run the animation sequence
     animateMove(attacker, defender, move) {
-        // SPECIAL: LIVE PERFORMANCES ANIMATION (Strobe Lights + Rocking Out)
+        // SPECIAL: LIVE PERFORMANCES
         if (move.name === "LIVE PERFORMANCES") {
-            // 1. Strobe lights effect (Background color flashing)
             let colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff, 0xffffff];
             this.time.addEvent({
                 delay: 100,
-                repeat: 10, // Flash 10 times
+                repeat: 10, 
                 callback: () => {
-                    this.cameras.main.setBackgroundColor(Phaser.Math.RND.pick(colors));
+                    const color = Phaser.Math.RND.pick(colors);
+                    if (this.bgImage) {
+                        this.bgImage.setTint(color);
+                    } else {
+                        this.cameras.main.setBackgroundColor(color);
+                    }
                 }
             });
 
-            // 2. Character "Rocking out" animation (Jumping and Scaling)
             this.tweens.add({
                 targets: attacker,
                 y: attacker.y - 40,
@@ -397,20 +407,21 @@ class BattleScene extends Phaser.Scene {
                 scaleY: attacker.scale * 1.2,
                 duration: 120,
                 yoyo: true,
-                repeat: 5, // Jump 5 times
+                repeat: 5,
                 onComplete: () => {
-                    // Reset background and scale
-                    this.cameras.main.setBackgroundColor(BATTLE_CONFIG.colors.background);
+                    if (this.bgImage) {
+                        this.bgImage.clearTint();
+                    } else {
+                        this.cameras.main.setBackgroundColor(BATTLE_CONFIG.colors.background);
+                    }
                     attacker.setScale(BATTLE_CONFIG.player.scale); 
                     this.hitTarget(attacker, defender, move);
                 }
             });
-            return; // Skip standard animations
+            return;
         }
 
-        // 1. Attack Animation
         if (move.type === 'physical') {
-            // Tackle Tween
             let direction = attacker.isPlayer ? 1 : -1;
             this.tweens.add({
                 targets: attacker,
@@ -422,7 +433,6 @@ class BattleScene extends Phaser.Scene {
                 onComplete: () => this.hitTarget(attacker, defender, move)
             });
         } else if (move.type === 'status') {
-            // Healing or Status
             this.tweens.add({
                 targets: attacker,
                 y: attacker.y - 10,
@@ -432,7 +442,6 @@ class BattleScene extends Phaser.Scene {
                 onComplete: () => this.hitTarget(attacker, defender, move)
             });
         } else {
-            // Special Attack (Flash color + particles)
             this.tweens.add({
                 targets: attacker,
                 alpha: 0.2,
@@ -445,43 +454,33 @@ class BattleScene extends Phaser.Scene {
     }
 
     hitTarget(attacker, defender, move) {
-        // 2. Damage Calculation
         let damage = move.power;
 
-        // Reduce damage if it's the enemy attacking (Not very effective)
         if (!attacker.isPlayer && damage > 0) {
             damage = Math.floor(damage / 2);
         }
 
         defender.hp -= damage;
         
-        // Handle Healing (negative power)
         if (move.power < 0) {
-             // If healing self
              if (attacker === defender) {
-                 attacker.hp -= move.power; // double negative adds
+                 attacker.hp -= move.power;
              } else {
-                 // Usually healing moves are self, but if not:
                  defender.hp -= move.power;
              }
         }
 
-        // Cap HP
         if(defender.hp > defender.maxHp) defender.hp = defender.maxHp;
         if(attacker.hp > attacker.maxHp) attacker.hp = attacker.maxHp;
 
-        // 3. Hit Animation (Shake Victim)
-        // If it was a healing move, don't shake, just flash green
         if (move.power < 0) {
-             let target = (move.power < 0 && attacker === defender) ? attacker : defender;
-             this.cameras.main.flash(500, 0, 255, 0); // Green flash
+             this.cameras.main.flash(500, 0, 255, 0);
              this.updateHealthUI();
              this.checkWinCondition(defender);
              return;
         }
 
-        // Normal Hit
-        this.cameras.main.shake(100, 0.01); // Screen shake
+        this.cameras.main.shake(100, 0.01);
         this.tweens.add({
             targets: defender,
             x: defender.x + (Math.random() * 20 - 10),
@@ -490,7 +489,7 @@ class BattleScene extends Phaser.Scene {
             repeat: 5,
             yoyo: true,
             onComplete: () => {
-                // Reset position to exact coords to prevent drift
+                // Reset position to exact coords
                 defender.x = defender.isPlayer ? BATTLE_CONFIG.player.x : BATTLE_CONFIG.enemy.x;
                 defender.y = defender.isPlayer ? BATTLE_CONFIG.player.y : BATTLE_CONFIG.enemy.y;
                 
@@ -505,7 +504,6 @@ class BattleScene extends Phaser.Scene {
             victim.hp = 0;
             this.updateHealthUI();
             
-            // Faint Animation
             this.tweens.add({
                 targets: victim,
                 y: victim.y + 50,
@@ -514,16 +512,80 @@ class BattleScene extends Phaser.Scene {
                 onComplete: () => {
                      let winMsg = victim.isPlayer ? BATTLE_CONFIG.text.lose : BATTLE_CONFIG.text.win;
                      this.typewriteText(winMsg, () => {
-                         // Restart or End logic could go here
+                        // If the enemy died (Player won), trigger victory sequence
+                        if (!victim.isPlayer) {
+                            this.time.delayedCall(1000, () => this.triggerWinSequence());
+                        }
                      });
                 }
             });
 
         } else {
-            // Next Turn
             this.turn = (this.turn === 'player') ? 'enemy' : 'player';
             this.showMenu();
         }
+    }
+
+    triggerWinSequence() {
+        // Clear the bottom dialogue box
+        this.mainText.setText("");
+        
+        // Create Big Victory Text in the center of the text box
+        // Box starts at 400, height 150. Center Y is roughly 475.
+        let victoryText = this.add.text(this.scale.width / 2, 475, "JCC WINS!", {
+            font: "bold 60px Courier",
+            fill: "#ffffff",
+            stroke: "#000000",
+            strokeThickness: 6,
+            align: "center"
+        }).setOrigin(0.5).setDepth(200).setAlpha(0);
+
+        // Animate the text popping in
+        this.tweens.add({
+            targets: victoryText,
+            alpha: 1,
+            scale: { from: 0.5, to: 1.2 },
+            duration: 1000,
+            ease: 'Back.out'
+        });
+
+        // --- CONFETTI EFFECT ---
+        
+        // 1. Generate a simple white square texture for confetti
+        if (!this.textures.exists('confetti')) {
+            let graphics = this.make.graphics({x: 0, y: 0, add: false});
+            graphics.fillStyle(0xffffff, 1);
+            graphics.fillRect(0, 0, 10, 10);
+            graphics.generateTexture('confetti', 10, 10);
+        }
+        
+        const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff];
+        
+        // 2. Create Left Emitter (Shooting Up and Right)
+        this.add.particles(0, this.scale.height, 'confetti', {
+            speed: { min: 400, max: 700 },
+            angle: { min: -75, max: -30 }, // Angles in degrees (0 is right, -90 is up)
+            gravityY: 300,
+            lifespan: 3000,
+            scale: { start: 1, end: 0 },
+            tint: colors,
+            emitting: true,
+            frequency: 40,
+            duration: 3000 // Stop emitting after 3 seconds
+        }).setDepth(150);
+
+        // 3. Create Right Emitter (Shooting Up and Left)
+        this.add.particles(this.scale.width, this.scale.height, 'confetti', {
+            speed: { min: 400, max: 700 },
+            angle: { min: -150, max: -105 }, 
+            gravityY: 300,
+            lifespan: 3000,
+            scale: { start: 1, end: 0 },
+            tint: colors,
+            emitting: true,
+            frequency: 40,
+            duration: 3000
+        }).setDepth(150);
     }
 }
 
@@ -532,20 +594,26 @@ class BattleScene extends Phaser.Scene {
 // ========================================================================================
 
 const config = {
-    // SWITCHED TO CANVAS to prevent black screens on systems with WebGL issues
-    type: Phaser.CANVAS, 
-    width: 600,
-    height: 550,
+    type: Phaser.AUTO, 
+    scale: {
+        mode: Phaser.Scale.FIT, 
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: 600,
+        height: 550
+    },
     parent: 'game-container',
-    // Set explicit background color here to ensure visibility
     backgroundColor: '#f8f8d8', 
-    pixelArt: true,
+    
+    // --- HIGH QUALITY SMOOTHING SETTINGS ---
+    pixelArt: false,       // Turn OFF retro pixelation
+    antialias: true,       // Turn ON smoothing
+    roundPixels: false,    // Turn OFF pixel snapping
+    // ---------------------------------------
+    
     scene: BattleScene,
     physics: {
         default: 'arcade',
-        arcade: {
-            gravity: { y: 0 }
-        }
+        arcade: { gravity: { y: 0 } }
     }
 };
 
