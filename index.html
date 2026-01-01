@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom WebGL Battle Engine</title>
+    <style>
+        body {
+            background-color: #202020;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+        }
+        #game-wrapper {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            border: 10px solid #8b9bb4; /* Gameboy Grey */
+            border-radius: 10px;
+            background-color: #f8f8d8; /* Changed default to match game bg */
+            width: 600px;
+            height: 550px;
+        }
+        #game-container {
+            width: 100%;
+            height: 100%;
+        }
+        .instructions {
+            position: absolute;
+            top: -40px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            color: #8b9bb4;
+            font-size: 14px;
+        }
+        /* Loading message in case JS fails */
+        #loading-msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #333;
+            font-weight: bold;
+            z-index: 0;
+        }
+    </style>
+    <!-- Import Phaser 3 Framework -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div id="loading-msg">Loading Battle Engine...</div>
+    <div class="instructions">Use keys 1-4 to select a move</div>
+    <div id="game-container" style="position: relative; z-index: 1;"></div>
+</div>
+
+<script>
+// ========================================================================================
+// 1. USER CONFIGURATION ZONE - EDIT THIS TO CUSTOMIZE YOUR BATTLE
+// ========================================================================================
+
+const BATTLE_CONFIG = {
+    // VISUAL SETTINGS
+    colors: {
+        background: 0xf8f8d8, // Classic Gameboy Greenish-White
+        uiBox: 0x2e4053,      // Dark text box color
+        uiText: 0xffffff,     // White text
+        healthBarFull: 0x2ecc71,
+        healthBarLow: 0xe74c3c
+    },
+
+    // TEXT MESSAGES
+    text: {
+        intro: "A wild BORING WEEKEND appeared!",
+        win: "Boring Weekend fainted",
+        lose: "The weekend was wasted...",
+        whatDo: "What will JCC do?"
+    },
+
+    // PLAYER CONFIGURATION
+    player: {
+        name: "JCC",
+        maxHp: 150,
+        // TO USE YOUR OWN IMAGE: Upload image to a host (like Imgur) and paste URL here.
+        // If 'spriteUrl' is empty, it uses a colored block.
+        // NOTE: If you are getting "Invalid URL" errors, keep this empty unless the file exists locally.
+        spriteUrl: "", 
+        fallbackColor: 0xe74c3c, // Red (Excitement)
+        scale: 3, // Make sprite bigger/smaller
+        x: 150, y: 300, // Screen position
+        moves: [
+            { name: "COSPLAY", power: 35, type: "special", text: "dazzled with COSPLAY!" },
+            { name: "ACTIVITIES", power: 25, type: "physical", text: "joined ACTIVITIES!" },
+            { name: "GAMING ARENA", power: 45, type: "special", text: "dominated the GAMING ARENA!" },
+            { name: "LIVE PERFORMANCES", power: 40, type: "special", text: "rocked out with LIVE PERFORMANCES!" }
+        ]
+    },
+
+    // ENEMY CONFIGURATION
+    enemy: {
+        name: "BORING WEEKEND",
+        maxHp: 120,
+        spriteUrl: "", 
+        fallbackColor: 0x7f8c8d, // Grey (Boring)
+        scale: 3,
+        x: 450, y: 150,
+        moves: [
+            { name: "STARE AT CEILING", power: 10, type: "physical", text: "stared at the ceiling." },
+            { name: "TV RERUNS", power: 25, type: "special", text: "played boring TV RERUNS!" },
+            { name: "DOOMSCROLL", power: 30, type: "special", text: "used THE ENDLESS DOOMSCROLL!" },
+            { name: "UNNECESSARY NAP", power: 20, type: "status", text: "took an UNNECESSARY NAP!" }
+        ]
+    }
+};
+
+// ========================================================================================
+// 2. ENGINE LOGIC (WEBGL RENDERER & GAME LOOP)
+// ========================================================================================
+
+class BattleScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'BattleScene' });
+    }
+
+    preload() {
+        // Safe load: Handle errors if images are missing or blocked by CORS
+        this.load.on('loaderror', (fileObj) => {
+            console.warn("Could not load file:", fileObj.key);
+        });
+
+        // Helper to validate URLs before passing to Phaser loader
+        // This prevents the "Failed to execute 'open' on 'XMLHttpRequest'" error
+        const loadIfValid = (key, url) => {
+            if (url && typeof url === 'string' && url.trim().length > 0) {
+                this.load.image(key, url);
+            }
+        };
+
+        loadIfValid('player', BATTLE_CONFIG.player.spriteUrl);
+        loadIfValid('enemy', BATTLE_CONFIG.enemy.spriteUrl);
+    }
+
+    create() {
+        // Hide loading message
+        const loadingMsg = document.getElementById('loading-msg');
+        if (loadingMsg) loadingMsg.style.display = 'none';
+
+        this.turn = 'player'; // 'player' or 'enemy'
+        this.isAnimating = false;
+
+        // 1. Setup Background
+        this.cameras.main.setBackgroundColor(BATTLE_CONFIG.colors.background);
+
+        // 2. Create Characters (Sprites or Fallback Rectangles)
+        this.player = this.createCharacter('player', BATTLE_CONFIG.player);
+        this.enemy = this.createCharacter('enemy', BATTLE_CONFIG.enemy);
+
+        // 3. Create UI (Health Bars & Text Box)
+        this.createUI();
+
+        // 4. Start Intro
+        this.typewriteText(BATTLE_CONFIG.text.intro, () => {
+            this.showMenu();
+        });
+
+        // 5. Input Handling (Keyboard)
+        this.input.keyboard.on('keydown', (event) => this.handleInput(event));
+    }
+
+    createCharacter(key, config) {
+        let sprite;
+        // Check if we loaded a real image or need a placeholder rectangle
+        if (this.textures.exists(key)) {
+            sprite = this.add.image(config.x, config.y, key);
+            sprite.setScale(config.scale);
+        } else {
+            // Draw a placeholder box if no image found (Fallback)
+            let graphics = this.add.graphics();
+            graphics.lineStyle(2, 0x000000, 1);
+            graphics.fillStyle(config.fallbackColor, 1);
+            graphics.fillRect(-32, -32, 64, 64); // 64x64 box
+            graphics.strokeRect(-32, -32, 64, 64);
+            
+            // Add a little "face" to know direction
+            graphics.fillStyle(0x000000, 1);
+            if (key === 'player') {
+                 // Back view (no face, maybe a tail/ear hint)
+                 graphics.fillRect(-10, -32, 5, 10); // Left ear
+                 graphics.fillRect(5, -32, 5, 10); // Right ear
+            } else {
+                // Front view (eyes)
+                graphics.fillRect(-15, -10, 5, 5); // Left eye
+                graphics.fillRect(10, -10, 5, 5); // Right eye
+            }
+
+            sprite = this.add.container(config.x, config.y, [graphics]);
+            sprite.setSize(64, 64);
+        }
+        
+        // Add stats to the sprite object
+        sprite.name = config.name;
+        sprite.hp = config.maxHp;
+        sprite.maxHp = config.maxHp;
+        sprite.moves = config.moves;
+        sprite.isPlayer = (key === 'player');
+        
+        // Add shadow
+        let shadow = this.add.ellipse(config.x, config.y + 40, 80, 20, 0x000000, 0.2);
+        
+        return sprite;
+    }
+
+    createUI() {
+        // --- Health Bars ---
+        this.enemyHP = this.addHealthBar(50, 50, BATTLE_CONFIG.enemy.name);
+        this.playerHP = this.addHealthBar(350, 250, BATTLE_CONFIG.player.name);
+        this.updateHealthUI();
+
+        // --- Dialog Box ---
+        // Main container box
+        let boxGraphics = this.add.graphics();
+        boxGraphics.fillStyle(BATTLE_CONFIG.colors.uiBox, 1);
+        boxGraphics.fillRect(0, 400, 600, 150);
+        
+        // Border for style
+        boxGraphics.lineStyle(4, 0xffffff, 1);
+        boxGraphics.strokeRect(4, 404, 592, 142);
+        
+        this.mainText = this.add.text(30, 420, "", { 
+            font: "24px Courier", 
+            fill: "#ffffff", 
+            wordWrap: { width: 540 } 
+        });
+
+        // --- Menu Text (Initially Hidden) ---
+        // Moved container down to y=460 to sit below the main question text
+        this.menuContainer = this.add.container(30, 460);
+        
+        // Instructions for the menu
+        BATTLE_CONFIG.player.moves.forEach((move, index) => {
+            // Grid Layout Logic
+            // index 0 & 1 go to row 0. index 2 & 3 go to row 1.
+            let xPos = (index % 2) * 280; 
+            let yPos = Math.floor(index / 2) * 40;
+
+            let txt = this.add.text(xPos, yPos, `${index + 1}. ${move.name}`, { 
+                font: "20px Courier", 
+                fill: "#ffffff"
+            });
+            this.menuContainer.add(txt);
+        });
+        this.menuContainer.setVisible(false);
+    }
+
+    addHealthBar(x, y, name) {
+        let container = this.add.container(x, y);
+        
+        // Background for the HUD element
+        let hudBg = this.add.graphics();
+        hudBg.fillStyle(0xffffff, 0.8);
+        hudBg.fillRoundedRect(-10, -5, 220, 60, 5);
+        hudBg.lineStyle(2, 0x000000, 1);
+        hudBg.strokeRoundedRect(-10, -5, 220, 60, 5);
+        
+        let nameText = this.add.text(0, 0, name, { font: "bold 20px Courier", fill: "#000" });
+        
+        // HP Text label
+        let hpLabel = this.add.text(0, 25, "HP:", { font: "bold 16px Courier", fill: "#000" });
+
+        let bg = this.add.rectangle(30, 32, 160, 12, 0x000000).setOrigin(0);
+        let bgInner = this.add.rectangle(32, 34, 156, 8, 0xffffff).setOrigin(0);
+        let fill = this.add.rectangle(32, 34, 156, 8, BATTLE_CONFIG.colors.healthBarFull).setOrigin(0);
+        
+        container.add([hudBg, nameText, hpLabel, bg, bgInner, fill]);
+        container.fillBar = fill; // Reference for updating
+        return container;
+    }
+
+    updateHealthUI() {
+        // Player
+        let pPct = Math.max(0, this.player.hp / this.player.maxHp);
+        this.tweens.add({
+            targets: this.playerHP.fillBar,
+            width: 156 * pPct,
+            duration: 200,
+            ease: 'Power2'
+        });
+        this.playerHP.fillBar.fillColor = pPct < 0.2 ? BATTLE_CONFIG.colors.healthBarLow : BATTLE_CONFIG.colors.healthBarFull;
+
+        // Enemy
+        let ePct = Math.max(0, this.enemy.hp / this.enemy.maxHp);
+        this.tweens.add({
+            targets: this.enemyHP.fillBar,
+            width: 156 * ePct,
+            duration: 200,
+            ease: 'Power2'
+        });
+        this.enemyHP.fillBar.fillColor = ePct < 0.2 ? BATTLE_CONFIG.colors.healthBarLow : BATTLE_CONFIG.colors.healthBarFull;
+    }
+
+    typewriteText(text, callback) {
+        this.mainText.setText("");
+        this.menuContainer.setVisible(false);
+        let length = text.length;
+        let i = 0;
+        
+        // Clear any existing timer to prevent overlap
+        if(this.textTimer) this.textTimer.remove();
+
+        this.textTimer = this.time.addEvent({
+            callback: () => {
+                this.mainText.text += text[i];
+                i++;
+                if (i === length && callback) {
+                    this.time.delayedCall(1000, callback);
+                }
+            },
+            repeat: length - 1,
+            delay: 30
+        });
+    }
+
+    showMenu() {
+        if (this.turn === 'player') {
+            this.mainText.setText(BATTLE_CONFIG.text.whatDo);
+            this.menuContainer.setVisible(true);
+            this.isAnimating = false; // Allow input
+        } else {
+            // Enemy Turn AI (Random Move)
+            this.time.delayedCall(1000, () => {
+                if(this.enemy.hp > 0) {
+                    let randomMove = Phaser.Math.RND.pick(this.enemy.moves);
+                    this.performMove(this.enemy, this.player, randomMove);
+                }
+            });
+        }
+    }
+
+    handleInput(event) {
+        if (this.turn !== 'player' || this.isAnimating) return;
+
+        // Check for number keys 1-4
+        let keyIndex = parseInt(event.key) - 1;
+        if (keyIndex >= 0 && keyIndex < BATTLE_CONFIG.player.moves.length) {
+            let move = BATTLE_CONFIG.player.moves[keyIndex];
+            this.performMove(this.player, this.enemy, move);
+        }
+    }
+
+    performMove(attacker, defender, move) {
+        this.isAnimating = true;
+        this.menuContainer.setVisible(false);
+        
+        let msg = `${attacker.name} ${move.text}`;
+        
+        // Add "Not very effective" text for enemy attacks
+        if (!attacker.isPlayer) {
+            msg += " It's not very effective...";
+        }
+
+        this.typewriteText(msg, null); // null callback, we handle timing manually below
+
+        // Wait for text, then animate
+        this.time.delayedCall(1000, () => {
+            
+            // 1. Attack Animation
+            if (move.type === 'physical') {
+                // Tackle Tween
+                let direction = attacker.isPlayer ? 1 : -1;
+                this.tweens.add({
+                    targets: attacker,
+                    x: attacker.x + (50 * direction),
+                    y: attacker.y - 20,
+                    yoyo: true,
+                    duration: 100,
+                    ease: 'Power1',
+                    onComplete: () => this.hitTarget(attacker, defender, move)
+                });
+            } else if (move.type === 'status') {
+                // Healing or Status
+                this.tweens.add({
+                    targets: attacker,
+                    y: attacker.y - 10,
+                    yoyo: true,
+                    duration: 200,
+                    repeat: 1,
+                    onComplete: () => this.hitTarget(attacker, defender, move)
+                });
+            } else {
+                // Special Attack (Flash color + particles)
+                this.tweens.add({
+                    targets: attacker,
+                    alpha: 0.2,
+                    yoyo: true,
+                    duration: 80,
+                    repeat: 3,
+                    onComplete: () => this.hitTarget(attacker, defender, move)
+                });
+            }
+        });
+    }
+
+    hitTarget(attacker, defender, move) {
+        // 2. Damage Calculation
+        let damage = move.power;
+
+        // Reduce damage if it's the enemy attacking (Not very effective)
+        if (!attacker.isPlayer && damage > 0) {
+            damage = Math.floor(damage / 2);
+        }
+
+        defender.hp -= damage;
+        
+        // Handle Healing (negative power)
+        if (move.power < 0) {
+             // If healing self
+             if (attacker === defender) {
+                 attacker.hp -= move.power; // double negative adds
+             } else {
+                 // Usually healing moves are self, but if not:
+                 defender.hp -= move.power;
+             }
+        }
+
+        // Cap HP
+        if(defender.hp > defender.maxHp) defender.hp = defender.maxHp;
+        if(attacker.hp > attacker.maxHp) attacker.hp = attacker.maxHp;
+
+        // 3. Hit Animation (Shake Victim)
+        // If it was a healing move, don't shake, just flash green
+        if (move.power < 0) {
+             let target = (move.power < 0 && attacker === defender) ? attacker : defender;
+             this.cameras.main.flash(500, 0, 255, 0); // Green flash
+             this.updateHealthUI();
+             this.checkWinCondition(defender);
+             return;
+        }
+
+        // Normal Hit
+        this.cameras.main.shake(100, 0.01); // Screen shake
+        this.tweens.add({
+            targets: defender,
+            x: defender.x + (Math.random() * 20 - 10),
+            y: defender.y + (Math.random() * 20 - 10),
+            duration: 50,
+            repeat: 5,
+            yoyo: true,
+            onComplete: () => {
+                // Reset position to exact coords to prevent drift
+                defender.x = defender.isPlayer ? BATTLE_CONFIG.player.x : BATTLE_CONFIG.enemy.x;
+                defender.y = defender.isPlayer ? BATTLE_CONFIG.player.y : BATTLE_CONFIG.enemy.y;
+                
+                this.updateHealthUI();
+                this.checkWinCondition(defender);
+            }
+        });
+    }
+
+    checkWinCondition(victim) {
+        if (victim.hp <= 0) {
+            victim.hp = 0;
+            this.updateHealthUI();
+            
+            // Faint Animation
+            this.tweens.add({
+                targets: victim,
+                y: victim.y + 50,
+                alpha: 0,
+                duration: 1000,
+                onComplete: () => {
+                     let winMsg = victim.isPlayer ? BATTLE_CONFIG.text.lose : BATTLE_CONFIG.text.win;
+                     this.typewriteText(winMsg, () => {
+                         // Restart or End logic could go here
+                     });
+                }
+            });
+
+        } else {
+            // Next Turn
+            this.turn = (this.turn === 'player') ? 'enemy' : 'player';
+            this.showMenu();
+        }
+    }
+}
+
+// ========================================================================================
+// 3. INITIALIZE PHASER
+// ========================================================================================
+
+const config = {
+    // SWITCHED TO CANVAS to prevent black screens on systems with WebGL issues
+    type: Phaser.CANVAS, 
+    width: 600,
+    height: 550,
+    parent: 'game-container',
+    // Set explicit background color here to ensure visibility
+    backgroundColor: '#f8f8d8', 
+    pixelArt: true,
+    scene: BattleScene,
+    physics: {
+        default: 'arcade',
+        arcade: {
+            gravity: { y: 0 }
+        }
+    }
+};
+
+const game = new Phaser.Game(config);
+
+</script>
+</body>
+</html>
