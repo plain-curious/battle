@@ -77,7 +77,7 @@ const BATTLE_CONFIG = {
     // TEXT MESSAGES
     text: {
         intro: "A wild BORING WEEKEND appeared!",
-        win: "Boring Weekend fainted",
+        win: "Boring Weekend fainted!",
         lose: "The weekend was wasted...",
         whatDo: "What will JCC do?"
     },
@@ -85,7 +85,7 @@ const BATTLE_CONFIG = {
     // PLAYER CONFIGURATION
     player: {
         name: "JCC",
-        maxHp: 150,
+        maxHp: 300, // Increased HP for longer battles
         // TO USE YOUR OWN IMAGE: Upload image to a host (like Imgur) and paste URL here.
         // If 'spriteUrl' is empty, it uses a colored block.
         // NOTE: If you are getting "Invalid URL" errors, keep this empty unless the file exists locally.
@@ -97,23 +97,24 @@ const BATTLE_CONFIG = {
             { name: "COSPLAY", power: 35, type: "special", text: "dazzled with COSPLAY!" },
             { name: "ACTIVITIES", power: 25, type: "physical", text: "joined ACTIVITIES!" },
             { name: "GAMING ARENA", power: 45, type: "special", text: "dominated the GAMING ARENA!" },
-            { name: "LIVE PERFORMANCES", power: 40, type: "special", text: "rocked out with LIVE PERFORMANCES!" }
+            { name: "LIVE PERFORMANCES", power: 999, type: "special", text: "rocked out with LIVE PERFORMANCES!" }
         ]
     },
 
     // ENEMY CONFIGURATION
     enemy: {
         name: "BORING WEEKEND",
-        maxHp: 120,
+        maxHp: 500, // Significantly increased HP to survive all 4 player moves
         spriteUrl: "", 
         fallbackColor: 0x7f8c8d, // Grey (Boring)
         scale: 3,
         x: 450, y: 150,
         moves: [
-            { name: "STARE AT CEILING", power: 10, type: "physical", text: "stared at the ceiling." },
-            { name: "TV RERUNS", power: 25, type: "special", text: "played boring TV RERUNS!" },
-            { name: "DOOMSCROLL", power: 30, type: "special", text: "used THE ENDLESS DOOMSCROLL!" },
-            { name: "UNNECESSARY NAP", power: 20, type: "status", text: "took an UNNECESSARY NAP!" }
+            // Increased power to compensate for the "Not very effective" (half damage) penalty
+            { name: "STARE AT CEILING", power: 30, type: "physical", text: "stared at the ceiling." }, 
+            { name: "TV RERUNS", power: 50, type: "special", text: "played boring TV RERUNS!" },
+            { name: "DOOMSCROLL", power: 60, type: "special", text: "used THE ENDLESS DOOMSCROLL!" },
+            { name: "UNNECESSARY NAP", power: 40, type: "status", text: "took an UNNECESSARY NAP!" }
         ]
     }
 };
@@ -358,51 +359,89 @@ class BattleScene extends Phaser.Scene {
         
         let msg = `${attacker.name} ${move.text}`;
         
-        // Add "Not very effective" text for enemy attacks
-        if (!attacker.isPlayer) {
-            msg += " It's not very effective...";
-        }
-
-        this.typewriteText(msg, null); // null callback, we handle timing manually below
-
-        // Wait for text, then animate
-        this.time.delayedCall(1000, () => {
+        // 1. Show Move Text
+        this.typewriteText(msg, () => {
             
-            // 1. Attack Animation
-            if (move.type === 'physical') {
-                // Tackle Tween
-                let direction = attacker.isPlayer ? 1 : -1;
-                this.tweens.add({
-                    targets: attacker,
-                    x: attacker.x + (50 * direction),
-                    y: attacker.y - 20,
-                    yoyo: true,
-                    duration: 100,
-                    ease: 'Power1',
-                    onComplete: () => this.hitTarget(attacker, defender, move)
-                });
-            } else if (move.type === 'status') {
-                // Healing or Status
-                this.tweens.add({
-                    targets: attacker,
-                    y: attacker.y - 10,
-                    yoyo: true,
-                    duration: 200,
-                    repeat: 1,
-                    onComplete: () => this.hitTarget(attacker, defender, move)
+            // 2. Logic after move text is done
+            if (!attacker.isPlayer) {
+                // If enemy, show effective text separately
+                this.typewriteText("It's not very effective...", () => {
+                    this.animateMove(attacker, defender, move);
                 });
             } else {
-                // Special Attack (Flash color + particles)
-                this.tweens.add({
-                    targets: attacker,
-                    alpha: 0.2,
-                    yoyo: true,
-                    duration: 80,
-                    repeat: 3,
-                    onComplete: () => this.hitTarget(attacker, defender, move)
-                });
+                // If player, go straight to animation
+                this.animateMove(attacker, defender, move);
             }
         });
+    }
+
+    // Helper to run the animation sequence
+    animateMove(attacker, defender, move) {
+        // SPECIAL: LIVE PERFORMANCES ANIMATION (Strobe Lights + Rocking Out)
+        if (move.name === "LIVE PERFORMANCES") {
+            // 1. Strobe lights effect (Background color flashing)
+            let colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff, 0xffffff];
+            this.time.addEvent({
+                delay: 100,
+                repeat: 10, // Flash 10 times
+                callback: () => {
+                    this.cameras.main.setBackgroundColor(Phaser.Math.RND.pick(colors));
+                }
+            });
+
+            // 2. Character "Rocking out" animation (Jumping and Scaling)
+            this.tweens.add({
+                targets: attacker,
+                y: attacker.y - 40,
+                scaleX: attacker.scale * 1.2,
+                scaleY: attacker.scale * 1.2,
+                duration: 120,
+                yoyo: true,
+                repeat: 5, // Jump 5 times
+                onComplete: () => {
+                    // Reset background and scale
+                    this.cameras.main.setBackgroundColor(BATTLE_CONFIG.colors.background);
+                    attacker.setScale(BATTLE_CONFIG.player.scale); 
+                    this.hitTarget(attacker, defender, move);
+                }
+            });
+            return; // Skip standard animations
+        }
+
+        // 1. Attack Animation
+        if (move.type === 'physical') {
+            // Tackle Tween
+            let direction = attacker.isPlayer ? 1 : -1;
+            this.tweens.add({
+                targets: attacker,
+                x: attacker.x + (50 * direction),
+                y: attacker.y - 20,
+                yoyo: true,
+                duration: 100,
+                ease: 'Power1',
+                onComplete: () => this.hitTarget(attacker, defender, move)
+            });
+        } else if (move.type === 'status') {
+            // Healing or Status
+            this.tweens.add({
+                targets: attacker,
+                y: attacker.y - 10,
+                yoyo: true,
+                duration: 200,
+                repeat: 1,
+                onComplete: () => this.hitTarget(attacker, defender, move)
+            });
+        } else {
+            // Special Attack (Flash color + particles)
+            this.tweens.add({
+                targets: attacker,
+                alpha: 0.2,
+                yoyo: true,
+                duration: 80,
+                repeat: 3,
+                onComplete: () => this.hitTarget(attacker, defender, move)
+            });
+        }
     }
 
     hitTarget(attacker, defender, move) {
